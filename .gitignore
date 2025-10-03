@@ -1,5 +1,5 @@
 core/build
-core/plugins
+core/plugins/*.so
 core/examples
 core/logs
 core/tmp

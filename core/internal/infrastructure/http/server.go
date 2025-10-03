@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 
 	"leonidas/core/internal/infrastructure/cache"
 	"leonidas/core/internal/infrastructure/config"
 	"leonidas/core/internal/infrastructure/database"
 	"leonidas/core/internal/infrastructure/plugin"
+	pkgplugin "leonidas/core/pkg/plugin"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/logger"
@@ -45,6 +47,11 @@ func NewServer() *Server {
 
 	// Criar gerenciador de plugins
 	pluginManager := plugin.NewManager(cfg)
+
+	// Configurar conexão do banco para os plugins
+	if database != nil {
+		pluginManager.SetDatabase(database.DB)
+	}
 
 	// Carregar plugins
 	if err := pluginManager.LoadPlugins(context.Background()); err != nil {
@@ -116,11 +123,10 @@ func setupRoutes(app *fiber.App, cfg *config.Config, healthHandler *HealthHandle
 		})
 
 		// Rota para obter informações de um plugin específico
-		api.Get("/plugins/:name/:version", func(c *fiber.Ctx) error {
+		api.Get("/:name", func(c *fiber.Ctx) error {
 			name := c.Params("name")
-			version := c.Params("version")
 
-			plugin, err := pluginManager.GetPlugin(name, version)
+			plugin, err := pluginManager.GetPluginByName(name)
 			if err != nil {
 				return c.Status(404).JSON(fiber.Map{
 					"error": "Plugin não encontrado",
@@ -138,11 +144,10 @@ func setupRoutes(app *fiber.App, cfg *config.Config, healthHandler *HealthHandle
 		})
 
 		// Rota para iniciar um plugin
-		api.Post("/plugins/:name/:version/start", func(c *fiber.Ctx) error {
+		api.Post("/:name/start", func(c *fiber.Ctx) error {
 			name := c.Params("name")
-			version := c.Params("version")
 
-			if err := pluginManager.StartPlugin(context.Background(), name, version); err != nil {
+			if err := pluginManager.StartPluginByName(context.Background(), name); err != nil {
 				return c.Status(400).JSON(fiber.Map{
 					"error": err.Error(),
 				})
@@ -154,11 +159,10 @@ func setupRoutes(app *fiber.App, cfg *config.Config, healthHandler *HealthHandle
 		})
 
 		// Rota para parar um plugin
-		api.Post("/plugins/:name/:version/stop", func(c *fiber.Ctx) error {
+		api.Post("/:name/stop", func(c *fiber.Ctx) error {
 			name := c.Params("name")
-			version := c.Params("version")
 
-			if err := pluginManager.StopPlugin(context.Background(), name, version); err != nil {
+			if err := pluginManager.StopPluginByName(context.Background(), name); err != nil {
 				return c.Status(400).JSON(fiber.Map{
 					"error": err.Error(),
 				})
@@ -167,6 +171,67 @@ func setupRoutes(app *fiber.App, cfg *config.Config, healthHandler *HealthHandle
 			return c.JSON(fiber.Map{
 				"message": "Plugin parado com sucesso",
 			})
+		})
+
+		// Roteamento dinâmico para plugins HTTP usando base_path
+		api.All("/*", func(c *fiber.Ctx) error {
+			requestPath := c.Params("*")
+
+			// Buscar plugin pelo base_path
+			httpPlugin, pluginBasePath, err := pluginManager.GetHTTPPluginByBasePath(requestPath)
+			if err != nil {
+				return c.Status(404).JSON(fiber.Map{
+					"error": "Plugin não encontrado ou não é um plugin HTTP",
+				})
+			}
+
+			// Verificar se o plugin está rodando
+			if !httpPlugin.IsRunning() {
+				return c.Status(503).JSON(fiber.Map{
+					"error": "Plugin não está rodando",
+				})
+			}
+
+			// Remover o base_path do caminho da requisição
+			pluginPath := strings.TrimPrefix(requestPath, pluginBasePath)
+			if pluginPath == "" {
+				pluginPath = "/"
+			}
+
+			// Construir requisição para o plugin
+			request := pkgplugin.HTTPRequest{
+				Method:  c.Method(),
+				Path:    pluginPath,
+				Headers: make(map[string]string),
+				Body:    c.Body(),
+				Query:   make(map[string]string),
+			}
+
+			// Copiar headers
+			c.Request().Header.VisitAll(func(key, value []byte) {
+				request.Headers[string(key)] = string(value)
+			})
+
+			// Copiar query parameters
+			c.Request().URI().QueryArgs().VisitAll(func(key, value []byte) {
+				request.Query[string(key)] = string(value)
+			})
+
+			// Processar requisição no plugin
+			response, err := httpPlugin.HandleRequest(context.Background(), request)
+			if err != nil {
+				return c.Status(500).JSON(fiber.Map{
+					"error": "Erro interno do plugin",
+				})
+			}
+
+			// Definir headers da resposta
+			for key, value := range response.Headers {
+				c.Set(key, value)
+			}
+
+			// Retornar resposta
+			return c.Status(response.StatusCode).Send(response.Body)
 		})
 	}
 }

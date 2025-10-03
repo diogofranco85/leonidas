@@ -89,9 +89,9 @@ type HTTPRequest struct {
 
 // HTTPResponse representa uma resposta HTTP
 type HTTPResponse struct {
-	StatusCode int               `json:"statusCode"`
-	Headers    map[string]string `json:"headers"`
-	Body       []byte            `json:"body"`
+	Code    int               `json:"statusCode"`
+	Headers map[string]string `json:"headers"`
+	Content []byte            `json:"body"`
 }
 
 // Task representa uma tarefa de background
@@ -113,10 +113,10 @@ type Event struct {
 
 // StatusCode implementa o método para HTTPResponse
 func (r HTTPResponse) StatusCode() int {
-	return r.StatusCode
+	return r.Code
 }
 
 // Body implementa o método para HTTPResponse
 func (r HTTPResponse) Body() []byte {
-	return r.Body
+	return r.Content
 }

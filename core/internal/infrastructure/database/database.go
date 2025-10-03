@@ -47,10 +47,17 @@ func NewDatabase(cfg *config.Config) (*Database, error) {
 		db, err = gorm.Open(mysql.Open(dsn), gormConfig)
 	case "sqlserver":
 		db, err = gorm.Open(sqlserver.Open(dsn), gormConfig)
-
+	default:
+		return nil, fmt.Errorf("driver de banco não suportado: %s", cfg.Database.Driver)
 	}
+
 	if err != nil {
 		return nil, fmt.Errorf("falha ao conectar ao banco de dados: %w", err)
+	}
+
+	// Verificar se db não é nil antes de usar
+	if db == nil {
+		return nil, fmt.Errorf("falha ao conectar ao banco de dados: conexão retornou nil")
 	}
 
 	// Configurar pool de conexões

@@ -12,6 +12,8 @@ import (
 
 	"leonidas/core/internal/infrastructure/config"
 	"leonidas/core/pkg/plugin"
+
+	"gorm.io/gorm"
 )
 
 // Manager gerencia o carregamento e execução de plugins
@@ -21,6 +23,7 @@ type Manager struct {
 	httpPlugins map[string]plugin.HTTPPlugin
 	mu          sync.RWMutex
 	logger      *log.Logger
+	database    *gorm.DB
 }
 
 // NewManager cria uma nova instância do gerenciador de plugins
@@ -30,7 +33,13 @@ func NewManager(cfg *config.Config) *Manager {
 		plugins:     make(map[string]plugin.Plugin),
 		httpPlugins: make(map[string]plugin.HTTPPlugin),
 		logger:      log.New(os.Stdout, "[PluginManager] ", log.LstdFlags),
+		database:    nil,
 	}
+}
+
+// SetDatabase define a conexão do banco de dados para os plugins
+func (m *Manager) SetDatabase(db *gorm.DB) {
+	m.database = db
 }
 
 // LoadPlugins carrega todos os plugins da pasta configurada
@@ -142,6 +151,27 @@ func (m *Manager) loadPlugin(ctx context.Context, pluginPath string) error {
 
 	// Armazenar o plugin
 	m.plugins[pluginKey] = pluginInstance
+
+	// Configurar conexão do banco para o auth-plugin
+	if info.Name == "auth-plugin" && m.database != nil {
+		// Tentar chamar a função SetDatabaseConnection se existir
+		if setDBFunc, err := p.Lookup("SetDatabaseConnection"); err == nil {
+			if setDB, ok := setDBFunc.(func(*gorm.DB)); ok {
+				setDB(m.database)
+				m.logger.Printf("Conexão do banco configurada para o plugin %s", info.Name)
+			}
+		}
+	}
+
+	// Iniciar automaticamente o auth-plugin
+	if info.Name == "auth-plugin" {
+		m.logger.Printf("Iniciando automaticamente o plugin %s", info.Name)
+		if err := pluginInstance.Start(ctx); err != nil {
+			m.logger.Printf("Aviso: Falha ao iniciar automaticamente o plugin %s: %v", info.Name, err)
+		} else {
+			m.logger.Printf("Plugin %s iniciado automaticamente com sucesso", info.Name)
+		}
+	}
 
 	// Verificar se é um plugin HTTP
 	if httpPlugin, ok := pluginInstance.(plugin.HTTPPlugin); ok {
@@ -269,4 +299,79 @@ func (m *Manager) GetPluginInfo() []plugin.PluginInfo {
 	}
 
 	return infos
+}
+
+// GetPluginByName retorna um plugin pelo nome (pega a primeira versão encontrada)
+func (m *Manager) GetPluginByName(name string) (plugin.Plugin, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, p := range m.plugins {
+		info := p.Info()
+		if info.Name == name {
+			return p, nil
+		}
+	}
+
+	return nil, fmt.Errorf("plugin %s não encontrado", name)
+}
+
+// StartPluginByName inicia um plugin pelo nome
+func (m *Manager) StartPluginByName(ctx context.Context, name string) error {
+	plugin, err := m.GetPluginByName(name)
+	if err != nil {
+		return err
+	}
+
+	return plugin.Start(ctx)
+}
+
+// StopPluginByName para um plugin pelo nome
+func (m *Manager) StopPluginByName(ctx context.Context, name string) error {
+	plugin, err := m.GetPluginByName(name)
+	if err != nil {
+		return err
+	}
+
+	return plugin.Stop(ctx)
+}
+
+// GetHTTPPlugin obtém um plugin HTTP pelo nome
+func (m *Manager) GetHTTPPlugin(name string) (plugin.HTTPPlugin, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// Buscar plugin pelo nome
+	for _, p := range m.plugins {
+		info := p.Info()
+		if info.Name == name {
+			// Verificar se é um HTTPPlugin
+			if httpPlugin, ok := p.(plugin.HTTPPlugin); ok {
+				return httpPlugin, nil
+			}
+			return nil, fmt.Errorf("plugin %s não é um plugin HTTP", name)
+		}
+	}
+
+	return nil, fmt.Errorf("plugin %s não encontrado", name)
+}
+
+// GetHTTPPluginByBasePath obtém um plugin HTTP pelo base_path
+func (m *Manager) GetHTTPPluginByBasePath(requestPath string) (plugin.HTTPPlugin, string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// Buscar plugin pelo base_path
+	for _, p := range m.plugins {
+		info := p.Info()
+		if info.BasePath != "" && strings.HasPrefix(requestPath, info.BasePath) {
+			// Verificar se é um HTTPPlugin
+			if httpPlugin, ok := p.(plugin.HTTPPlugin); ok {
+				return httpPlugin, info.BasePath, nil
+			}
+			return nil, "", fmt.Errorf("plugin %s não é um plugin HTTP", info.Name)
+		}
+	}
+
+	return nil, "", fmt.Errorf("nenhum plugin encontrado para o caminho %s", requestPath)
 }

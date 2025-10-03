@@ -11,6 +11,7 @@ type PluginInfo struct {
 	Version     string    `json:"version"`
 	Description string    `json:"description"`
 	Author      string    `json:"author"`
+	BasePath    string    `json:"base_path"` // Caminho base para as rotas do plugin
 	CreatedAt   time.Time `json:"created_at"`
 }
 

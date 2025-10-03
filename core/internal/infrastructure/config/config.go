@@ -51,6 +51,7 @@ func Load() *Config {
 
 	// Configurações do banco de dados
 	database := DatabaseConfig{
+		Driver:   getEnv("DB_DRIVER", "postgres"),
 		Host:     getEnv("DB_HOST", "localhost"),
 		Port:     getEnv("DB_PORT", "5432"),
 		User:     getEnv("DB_USER", "postgres"),
