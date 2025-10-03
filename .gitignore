@@ -1,0 +1,13 @@
+core/build
+core/plugins
+core/examples
+core/logs
+core/tmp
+core/temp
+core/vendor
+core/.env
+core/.env.local
+core/.env.development.local
+core/.env.test.local
+core/.env.production.local
+old-core
